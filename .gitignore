@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.pyc
+
+# 打包
+dist/
+build/
+build/*.spec
+runtime.log
+
+# ★ 隐私文件 (绝对不能传)
+data/config.json
+data/history.db
+data/voiceprint.npy
+data/uploads/
+data/chroma_db/
+
+# ★ 大模型文件 (Git 装不下)
+data/models/
+data/
+# 环境
+.env

@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Interview Copilot · 工作台</title>
+<link rel="stylesheet" href="/desktop-assets/style.css?v=1.02">
+</head>
+<body>
+<div class="topbar">
+  <span class="title">🎙 Interview Copilot</span>
+  <span class="pin" id="pinDisplay"></span>
+  <button onclick="showMobileQR()" style="font-size:11px; border:1px solid #ddd; background:#fff; padding:3px 10px; border-radius:4px; cursor:pointer; color:#333; margin-left:8px;">📱 手机端</button>
+  <div class="modes">
+    <button class="mode-btn active" data-mode="prepare" onclick="setMode('prepare')">准备模式</button>
+    <button class="mode-btn" data-mode="interview" onclick="setMode('interview')">面试模式</button>
+    <button class="mode-btn" onclick="openSimulateModal()" style="color:#b37700; border-color:#e6b86e;">模拟提问</button>
+    <button class="mode-btn" onclick="openSettings()">⚙</button>
+  </div>
+</div>
+
+<div class="main">
+  <!-- 左侧栏 -->
+  <aside class="sidebar-left">
+    <div class="section">
+      <div class="section-title">
+        <span>知识库</span>
+        <button onclick="uploadFile()">+</button>
+      </div>
+      <div id="fileList"></div>
+    </div>
+    
+    <div class="section">
+      <div class="section-title">
+        <span>🧠 策略卡</span>
+        <button onclick="loadStrategies()" title="刷新">↻</button>
+      </div>
+      <div id="strategyTree" class="strategy-tree"></div>
+    </div>
+    
+    <div class="section">
+      <div class="section-title">
+        <span>历史记录</span>
+        <button onclick="newSession()">+</button>
+      </div>
+      <div id="historyList"></div>
+    </div>
+  </aside>
+
+  <!-- 中间对话区 -->
+  <main class="chat-area">
+    <div class="chat-messages" id="chatMessages">
+      <div class="welcome">
+        <h2>面试准备助手</h2>
+        <p>上传简历和项目文档，然后和我讨论项目细节。</p>
+        <p>我会帮你拆解项目、挖掘量化结果、预测追问。</p>
+      </div>
+    </div>
+    <div class="chat-input-area">
+      <div class="chat-input-wrap">
+        <textarea id="chatInput" rows="1" placeholder="与 AI 讨论项目分解…（Enter 发送，Shift+Enter 换行）"></textarea>
+        <button id="sendBtn" onclick="sendChat()">发送</button>
+      </div>
+    </div>
+  </main>
+
+  <!-- 右侧栏（已修复：只保留一个，合并所有功能） -->
+  <aside class="sidebar-right">
+    <div class="audio-test-panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <div style="font-size:11px; color:#666; font-weight:600;">🎤 音频与声纹测试</div>
+        <button onclick="exportInterview()" style="font-size:11px; border:1px solid #ddd; background:#fff; padding:2px 8px; border-radius:4px; cursor:pointer; color:#333;">📥 导出 TXT</button>
+      </div>
+      <div class="test-btns" style="margin-bottom: 6px;">
+        <button onclick="testAudio('asr')" id="btnTestAsr">录音测试</button>
+        <button onclick="testAudio('vp_register')" id="btnTestVpReg">注册声纹</button>
+      </div>
+      <div class="test-btns">
+        <button onclick="testAudio('vp_verify')" id="btnTestVpVerify">验证声纹</button>
+        <button onclick="clearVoiceprint()" style="color:#c33; border-color:#f8d7d7;">清除声纹</button>
+      </div>
+    </div>
+
+    <div class="live-transcript">
+      <div class="section-title" style="padding:0 0 8px 0">
+        <span>实时转写</span>
+        <button onclick="clearTranscript()" style="font-size:11px;color:#666;background:none;border:none;cursor:pointer">清空</button>
+      </div>
+      <div id="liveTranscript"></div>
+    </div>
+    
+    <!-- 多面板容器 -->
+    <div class="answers-container" id="answersContainer">
+      <div class="hint" style="text-align:center; margin-top:20px;">面试问答将显示在这里...</div>
+    </div>
+  </aside>
+</div>
+
+<!-- 弹窗部分 (保持原样，无需修改) -->
+<div class="modal-overlay" id="settingsModal" style="display:none">
+  <div class="modal">
+    <div class="modal-header"><span>设置</span><button onclick="closeSettings()">✕</button></div>
+    <div class="modal-body">
+      <h3>DeepSeek API</h3>
+      <label>API Key <input type="password" id="cfgApiKey" placeholder="sk-..."></label>
+      <label>Base URL <input type="text" id="cfgBaseUrl"></label>
+      <label>面试模型 <input type="text" id="cfgInterviewModel"></label>
+      <label>准备模型 <input type="text" id="cfgPrepareModel"></label>
+      <h3>思考模式</h3>
+      <label>面试实时问答<select id="cfgThinkingInterview"><option value="off">关闭</option><option value="low">低强度</option><option value="high">高强度</option></select></label>
+      <label>代码题<select id="cfgThinkingCode"><option value="off">关闭</option><option value="low">低强度</option><option value="high">高强度</option></select></label>
+      <h3>老板键</h3>
+      <label>隐藏/恢复热键 <input type="text" id="cfgBossHotkey" placeholder="ctrl+shift+h"></label>
+      <h3>🎤 音频设备</h3>
+      <label>麦克风<select id="cfgMicDevice"><option value="">加载中...</option></select></label>
+      <label>系统回环<select id="cfgLoopDevice"><option value="">加载中...</option></select></label>
+      <h3>音频参数</h3>
+      <label>ASR 模型<select id="cfgAsrModel"><option value="tiny">tiny</option><option value="base">base</option><option value="small">small</option></select></label>
+      <label>设备<select id="cfgAsrDevice"><option value="cuda">cuda</option><option value="cpu">cpu</option></select></label>
+      <label>声纹阈值 <input type="number" step="0.05" min="0.5" max="0.95" id="cfgVoiceThreshold"></label>
+      <h3>RAG</h3>
+      <label>检索条数 <input type="number" id="cfgTopK" min="1" max="10"></label>
+      <h3>服务</h3>
+      <label>访问 PIN <input type="text" id="cfgPin" maxlength="8"></label>
+    </div>
+    <div class="modal-footer" style="justify-content: space-between;">
+      <button class="btn-secondary" onclick="warmupCache()" id="warmupBtn" style="border-color:#4caf50; color:#1b7a3e;">⚡ 预热面试缓存</button>
+      <div><button class="btn-secondary" onclick="closeSettings()">取消</button><button class="btn-primary" onclick="saveSettings()">保存</button></div>
+    </div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="simulateModal" style="display:none">
+  <div class="modal" style="width:400px;">
+    <div class="modal-header"><span>模拟面试官提问</span><button onclick="closeSimulateModal()">✕</button></div>
+    <div class="modal-body"><textarea id="simulateInput" rows="3" style="width:100%; padding:10px; border:1px solid #ddd; border-radius:6px; font-size:14px; outline:none; font-family:inherit;" placeholder="输入面试官的问题..."></textarea></div>
+    <div class="modal-footer"><button class="btn-secondary" onclick="closeSimulateModal()">取消</button><button class="btn-primary" onclick="sendSimulate()">发送</button></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="strategyEditModal" style="display:none">
+  <div class="modal" style="width:800px; max-width:90vw;">
+    <div class="modal-header"><span id="strategyEditTitle">编辑策略卡</span><button onclick="document.getElementById('strategyEditModal').style.display='none'">✕</button></div>
+    <div class="modal-body" style="padding: 0;"><textarea id="strategyEditContent" style="border:none; border-radius:0; height: 60vh;"></textarea></div>
+    <div class="modal-footer"><button class="btn-secondary" onclick="document.getElementById('strategyEditModal').style.display='none'">取消</button><button class="btn-primary" onclick="saveStrategy()">保存修改</button></div>
+  </div>
+</div>
+
+<!-- ★ 手机端二维码弹窗 -->
+<div class="modal-overlay" id="mobileQRModal" style="display:none">
+  <div class="modal" style="width:380px;">
+    <div class="modal-header">
+      <span>📱 手机端访问</span>
+      <button onclick="document.getElementById('mobileQRModal').style.display='none'">✕</button>
+    </div>
+    <div class="modal-body" style="text-align:center; padding:20px;">
+      <img id="qrCodeImage" alt="二维码" style="width:240px; height:240px; border-radius:8px; background:#fff;">
+      <div id="mobileURLText" style="margin-top:14px; font-size:12px; color:#666; word-break:break-all; line-height:1.6;"></div>
+      <div style="margin-top:6px; font-size:11px; color:#aaa;">手机连同一热点/WiFi 后扫码，或手动输入地址</div>
+    </div>
+    <div class="modal-footer" style="justify-content:center;">
+      <button class="btn-secondary" onclick="copyMobileURL()">📋 复制地址</button>
+      <button class="btn-primary" onclick="document.getElementById('mobileQRModal').style.display='none'">关闭</button>
+    </div>
+  </div>
+</div>
+
+<script src="/desktop-assets/desktop.js"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "deepseek": {
+    "api_key": "sk-你的API_KEY填在这里",
+    "base_url": "https://api.deepseek.com",
+    "interview_model": "deepseek-chat",
+    "prepare_model": "deepseek-chat"
+  },
+  "audio": {
+    "asr_device": "cpu",
+    "voiceprint_threshold": 0.75
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "access_pin": "123456"
+  }
+}

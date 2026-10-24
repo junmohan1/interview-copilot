@@ -1,0 +1,581 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Notes</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html, body {
+  height: 100%;
+  background: #ffffff;
+  color: #222;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+body {
+  display: flex;
+  flex-direction: column;
+  padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom) 0;
+}
+
+.status-bar {
+  padding: 10px 16px;
+  font-size: 12px;
+  color: #888;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid #eee;
+  flex-shrink: 0;
+  background: #fafafb;
+}
+.dot {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: #ccc;
+  margin-right: 6px;
+  transition: background 0.3s;
+}
+.dot.on { background: #1b7a3e; box-shadow: 0 0 6px #1b7a3e; }
+
+.content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 16px;
+  -webkit-overflow-scrolling: touch;
+  background: #fff;
+}
+
+.empty {
+  color: #ccc;
+  font-size: 14px;
+  text-align: center;
+  margin-top: 40vh;
+}
+
+/* ================= 多问答面板 ================= */
+.qa-panel {
+  margin-bottom: 24px;
+  padding-bottom: 24px;
+  border-bottom: 1px dashed #eee;
+}
+.qa-panel:last-child {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+
+.question {
+  font-size: 15px;
+  color: #1a4a8c;
+  line-height: 1.5;
+  margin-bottom: 12px;
+  padding-left: 10px;
+  border-left: 3px solid #1a4a8c;
+  font-weight: bold;
+}
+
+/* 思考框 */
+.thinking-box {
+  background: #f8f8fa;
+  border: 1px solid #e5e5e8;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.thinking-header {
+  padding: 8px 12px;
+  font-size: 12px;
+  color: #888;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f2f2f5;
+  cursor: pointer;
+  user-select: none;
+}
+.thinking-content {
+  padding: 10px 14px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: #666;
+  max-height: 200px;
+  overflow-y: auto;
+  border-top: 1px solid #e5e5e8;
+  white-space: pre-wrap;
+  font-family: 'SF Mono', Consolas, monospace;
+  background: #fff;
+}
+.thinking-box.collapsed .thinking-content { display: none; }
+
+/* 答案区 */
+.answer {
+  font-size: 19px;
+  line-height: 1.75;
+  color: #222;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.answer.streaming::after {
+  content: '▍';
+  color: #1b7a3e;
+  animation: blink 0.9s infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* ================= 底部输入区 ================= */
+.bottom {
+  flex-shrink: 0;
+  padding: 10px 12px;
+  border-top: 1px solid #eee;
+  background: #fafafb;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.bottom input[type="text"] {
+  flex: 1;
+  background: #fff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+  padding: 10px 14px;
+  color: #222;
+  font-size: 16px;
+  outline: none;
+  min-width: 0;
+}
+.bottom input[type="text"]::placeholder { color: #aaa; }
+.bottom input[type="text"]:focus { border-color: #4caf50; }
+.bottom button {
+  background: #1b7a3e;
+  border: none;
+  color: #fff;
+  width: 44px;
+  height: 44px;
+  border-radius: 8px;
+  font-size: 18px;
+  cursor: pointer;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.bottom button:active { background: #156632; }
+.bottom button.thinking-high { background: #b37700; }
+
+/* ================= 弹窗与动画 ================= */
+.toast {
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(0,0,0,0.8);
+  color: #fff;
+  padding: 10px 20px;
+  border-radius: 8px;
+  font-size: 14px;
+  z-index: 999;
+  animation: fadeInOut 2s;
+}
+@keyframes fadeInOut {
+  0% { opacity: 0; }
+  15% { opacity: 1; }
+  85% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.thinking-sheet {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.4);
+  display: none;
+  flex-direction: column;
+  justify-content: flex-end;
+  z-index: 999;
+}
+.thinking-sheet.show { display: flex; }
+.sheet-item {
+  display: flex;
+  flex-direction: column;
+  padding: 18px 24px;
+  background: #fff;
+  border-top: 1px solid #eee;
+  cursor: pointer;
+  color: #222;
+}
+.sheet-item:first-child { border-radius: 16px 16px 0 0; }
+.sheet-item:last-child { padding-bottom: calc(18px + env(safe-area-inset-bottom)); }
+.sheet-item.active { background: #e8f5ec; }
+.sheet-item span { font-size: 16px; margin-bottom: 4px; }
+.sheet-item small { font-size: 12px; color: #999; }
+
+/* 滚动条 */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-thumb { background: #d5d5d8; border-radius: 3px; }
+::-webkit-scrollbar-track { background: transparent; }
+</style>
+</head>
+<body>
+<div class="status-bar">
+  <span><span class="dot" id="dot"></span><span id="status">连接中…</span></span>
+  <span id="clock"></span>
+</div>
+
+<div class="content" id="content">
+  <div class="empty" id="empty">等待面试官提问…</div>
+  <!-- 动态面板容器 -->
+  <div id="answersContainer"></div>
+</div>
+
+<div class="bottom">
+  <input type="text" id="manualInput" placeholder="识别有误？手动输入…">
+  <button onclick="toggleThinking()" id="thinkingBtn" title="思考模式">🧠</button>
+  <button onclick="document.getElementById('cameraInput').click()" title="拍照">📷</button>
+  <button onclick="sendManual()" title="发送">↵</button>
+</div>
+<input type="file" accept="image/*" capture="environment" id="cameraInput" style="display:none">
+
+<div class="thinking-sheet" id="thinkingSheet">
+  <div class="sheet-item" data-mode="off">
+    <span>⚡ 快速模式</span>
+    <small>0.5–1秒，适合常规问答</small>
+  </div>
+  <div class="sheet-item" data-mode="low">
+    <span>🧠 思考模式</span>
+    <small>2–4秒，适合技术题</small>
+  </div>
+  <div class="sheet-item active" data-mode="high">
+    <span>🔬 深度思考</span>
+    <small>5–15秒，适合代码题、系统设计</small>
+  </div>
+</div>
+
+<script>
+const pin = location.pathname.split('/').pop();
+const WS_URL = `ws://${location.host}/ws?pin=${pin}&role=mobile`;
+
+let ws;
+let reconnectTimer;
+let currentThinkingMode = 'off';
+let activeAnswers = {};
+
+let isFirstConnect = true;
+
+function connect() {
+  ws = new WebSocket(WS_URL);
+  const dot = document.getElementById('dot');
+  const status = document.getElementById('status');
+  ws.onopen = () => {
+    dot.classList.add('on');
+    status.textContent = '已连接';
+    // ★ 首次连接时拉取当前会话历史；断线重连不重复拉，避免清掉正在生成的面板
+    if (isFirstConnect) {
+      isFirstConnect = false;
+      ws.send(JSON.stringify({ type: 'load_current_history' }));
+    }
+  };
+  ws.onmessage = (e) => handle(JSON.parse(e.data));
+  ws.onclose = () => {
+    dot.classList.remove('on');
+    status.textContent = '重连中…';
+    clearTimeout(reconnectTimer);
+    reconnectTimer = setTimeout(connect, 1500);
+  };
+  ws.onerror = () => ws.close();
+}
+
+function createPanel(taskId, question) {
+  const container = document.getElementById('answersContainer');
+  const emptyEl = document.getElementById('empty');
+  emptyEl.style.display = 'none';
+
+  const panel = document.createElement('div');
+  panel.className = 'qa-panel';
+  panel.innerHTML = `
+    <div class="question"></div>
+    <div class="thinking-box collapsed" style="display:none">
+      <div class="thinking-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <span>🧠 思考中…</span>
+        <span style="font-size:10px;">▼</span>
+      </div>
+      <div class="thinking-content"></div>
+    </div>
+    <div class="answer streaming">生成中...</div>
+  `;
+  panel.querySelector('.question').textContent = question;
+  container.appendChild(panel);
+
+  activeAnswers[taskId] = {
+    answerEl: panel.querySelector('.answer'),
+    thinkBox: panel.querySelector('.thinking-box'),
+    thinkContent: panel.querySelector('.thinking-content'),
+    _done: false,
+    _timeout: null
+  };
+
+  return panel;
+}
+
+function renderHistory(messages) {
+  const container = document.getElementById('answersContainer');
+  const emptyEl = document.getElementById('empty');
+
+  container.innerHTML = '';
+  activeAnswers = {};
+
+  // 兼容老数据：没有 scene 字段时按 role 推断
+  const getScene = (m) => {
+    if (m.scene) return m.scene;
+    return (m.role === 'user' || m.role === 'assistant') ? 'prepare' : 'interview';
+  };
+
+  let lastPanelTaskId = null;
+  let hasContent = false;
+
+  messages.forEach((m, idx) => {
+    const scene = getScene(m);
+    if (scene !== 'interview') return;
+
+    if (m.role === 'interviewer') {
+      hasContent = true;
+      const taskId = 'hist_' + idx;
+      const panel = createPanel(taskId, m.content);
+      panel.querySelector('.answer').classList.remove('streaming');
+      panel.querySelector('.answer').textContent = '';
+      lastPanelTaskId = taskId;
+    } else if (m.role === 'assistant' && lastPanelTaskId) {
+      const task = activeAnswers[lastPanelTaskId];
+      if (task) {
+        task.answerEl.textContent = m.content || '';
+        task.answerEl.classList.remove('streaming');
+        task._done = true;
+        if (m.thinking) {
+          task.thinkBox.style.display = 'block';
+          task.thinkContent.textContent = m.thinking;
+          task.thinkBox.classList.add('collapsed');
+          const header = task.thinkBox.querySelector('.thinking-header');
+          if (header) {
+            header.innerHTML = `<span>🧠 已完成思考（点击展开）</span><span style="font-size:10px;">▼</span>`;
+          }
+        }
+      }
+      lastPanelTaskId = null;
+    }
+  });
+
+  emptyEl.style.display = hasContent ? 'none' : 'block';
+
+  setTimeout(() => {
+    const content = document.getElementById('content');
+    content.scrollTop = content.scrollHeight;
+  }, 100);
+}
+
+function handle(data) {
+  switch (data.type) {
+    case 'new_question': {
+      createPanel(data.task_id, data.text);
+      setTimeout(() => {
+        document.getElementById('content').scrollTop = document.getElementById('content').scrollHeight;
+      }, 50);
+      break;
+    }
+
+    case 'history_loaded': {
+      renderHistory(data.messages || []);
+      break;
+    }
+
+    case 'session_reset': {
+      document.getElementById('answersContainer').innerHTML = '';
+      activeAnswers = {};
+      document.getElementById('empty').style.display = 'block';
+      break;
+    }
+
+    case 'thinking_chunk': {
+      const task = activeAnswers[data.task_id];
+      if (task) {
+        task.thinkBox.style.display = 'block';
+        task.thinkContent.textContent = data.text;
+      }
+      break;
+    }
+
+    case 'answer_chunk': {
+      const task = activeAnswers[data.task_id];
+      if (task) {
+        task.answerEl.textContent = data.text;
+        task.answerEl.style.color = '#222'; // 恢复正常颜色
+        
+        // 如果开始输出正文，折叠思考框
+        if (data.text.length > 0) {
+          task.thinkBox.classList.add('collapsed');
+          const header = task.thinkBox.querySelector('.thinking-header');
+          if (header) {
+            // ★ 修复箭头消失：替换 innerHTML，保留 ▼ 符号
+            header.innerHTML = `<span>🧠 已完成思考（点击展开）</span><span style="font-size:10px;">▼</span>`;
+          }
+        }
+        
+        // 保持滚动条在底部
+        const contentArea = document.getElementById('content');
+        // 只有当用户原本就在底部附近时才自动滚动，避免用户往回看旧内容时被强行拉到底
+        if (contentArea.scrollHeight - contentArea.scrollTop - contentArea.clientHeight < 100) {
+          contentArea.scrollTop = contentArea.scrollHeight;
+        }
+      }
+      break;
+    }
+
+    case 'answer_done': {
+      const task = activeAnswers[data.task_id];
+      if (task) {
+        task._done = true;
+        if (task._timeout) clearTimeout(task._timeout);
+        task.answerEl.classList.remove('streaming');
+      }
+      break;
+    }
+
+    case 'answer_error': {
+      const task = activeAnswers[data.task_id];
+      if (task) {
+        task._done = true;
+        if (task._timeout) clearTimeout(task._timeout);
+        task.answerEl.textContent = '⚠ ' + data.message;
+        task.answerEl.classList.remove('streaming');
+      }
+      break;
+    }
+
+    case 'answer_cancelled': {
+      const task = activeAnswers[data.task_id];
+      if (task) {
+        task._done = true;
+        if (task._timeout) clearTimeout(task._timeout);
+        task.answerEl.textContent = '⛔ 已取消（并发过多）';
+        task.answerEl.classList.remove('streaming');
+      }
+      break;
+    }
+  }
+}
+
+function sendManual() {
+  const input = document.getElementById('manualInput');
+  const text = input.value.trim();
+  if (!text || !ws || ws.readyState !== 1) return;
+
+  ws.send(JSON.stringify({
+    type: 'manual_question',
+    text: text,
+    thinking_mode: currentThinkingMode
+  }));
+  input.value = '';
+  input.blur();
+}
+
+// 思考模式
+function toggleThinking() {
+  document.getElementById('thinkingSheet').classList.add('show');
+}
+document.querySelectorAll('.sheet-item').forEach(item => {
+  item.onclick = () => {
+    currentThinkingMode = item.dataset.mode;
+    document.querySelectorAll('.sheet-item').forEach(i => i.classList.remove('active'));
+    item.classList.add('active');
+
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({
+        type: 'set_thinking',
+        mode: currentThinkingMode,
+        scope: 'code'
+      }));
+    }
+
+    const btn = document.getElementById('thinkingBtn');
+    btn.textContent = currentThinkingMode === 'high' ? '🔬' : '🧠';
+    btn.classList.toggle('thinking-high', currentThinkingMode === 'high');
+
+    document.getElementById('thinkingSheet').classList.remove('show');
+  };
+});
+document.getElementById('thinkingSheet').onclick = (e) => {
+  if (e.target.id === 'thinkingSheet') e.target.classList.remove('show');
+};
+
+// 拍照上传
+document.getElementById('cameraInput').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  showToast(currentThinkingMode === 'high' ? '深度思考中…' : '识别中…');
+
+  try {
+    const compressed = await compressImage(file, 1600, 0.8);
+    const form = new FormData();
+    form.append('file', compressed, 'photo.jpg');
+
+    const url = `/vision/upload?thinking_mode=${currentThinkingMode}`;
+    const res = await fetch(url, { method: 'POST', body: form });
+    const data = await res.json();
+    if (data.status !== 'ok') showToast(data.message || '识别失败');
+  } catch (err) {
+    showToast('上传失败');
+  }
+  e.target.value = '';
+});
+
+function compressImage(file, maxDim, quality) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > maxDim || height > maxDim) {
+          const r = Math.min(maxDim / width, maxDim / height);
+          width *= r;
+          height *= r;
+        }
+        canvas.width = width;
+        canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => {
+          resolve(new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
+        }, 'image/jpeg', quality);
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function showToast(msg) {
+  const toast = document.createElement('div');
+  toast.className = 'toast';
+  toast.textContent = msg;
+  document.body.appendChild(toast);
+  setTimeout(() => toast.remove(), 2000);
+}
+
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').textContent =
+    `${d.getHours().toString().padStart(2,'0')}:${d.getMinutes().toString().padStart(2,'0')}`;
+}, 1000);
+
+setInterval(() => {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({ type: 'ping' }));
+}, 5000);
+
+connect();
+</script>
+</body>
+</html>

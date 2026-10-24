@@ -1,0 +1,34 @@
+# Web
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+websockets>=13.1
+python-multipart>=0.0.12
+python-dotenv>=1.0.1
+
+# 音频
+sounddevice>=0.5.1
+numpy>=2.1.0
+pyaudiowpatch>=0.2.12.7 ; sys_platform == "win32"
+
+# ASR
+faster-whisper>=1.1.0
+
+# 声纹
+speechbrain>=1.0.2
+torch>=2.6.0
+torchaudio>=2.6.0
+
+# RAG
+chromadb>=0.5.23
+pypdf>=5.1.0
+python-docx>=1.1.2
+openpyxl>=3.1.5
+
+# LLM
+openai>=1.55.0
+
+# 工具
+pillow>=11.0.0
+qrcode[pil]>=7.4.2
+pywebview>=5.0
+pythonnet>=3.0
