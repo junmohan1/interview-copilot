@@ -3,6 +3,7 @@ import os
 import sys
 import ctypes
 import subprocess
+import uuid
 from pathlib import Path
 
 # ========== 1. 预加载 Fortran DLL（必须在 numpy/scipy 之前） ==========
@@ -67,14 +68,16 @@ from contextlib import asynccontextmanager
 from datetime import datetime
 from pathlib import Path
 from backend.logic.strategy_manager import strategy_manager
-
+from backend.vision.capture import capture_screen_base64
+from backend.vision.listener import InputListener
 from fastapi import FastAPI, WebSocket, UploadFile, File, WebSocketDisconnect, Body
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from io import BytesIO
 import qrcode
-
+import shutil
+import gc
 from config import (
     CONFIG, reload_config, save_config, get,
     UPLOAD_DIR, BASE_DIR
@@ -104,6 +107,9 @@ generator = AnswerGenerator(kb=kb)
 vision = VisionClient(generator)
 capture = AudioCapture()
 active_tasks = {}
+staged_screenshots = []  # ★ 新增：用于双击中键暂存的截图
+live_tasks_context = {}
+_main_loop = None
 
 # 每次启动都新建一个会话，避免一天多场面试的记录混在一起
 CURRENT_SESSION_ID = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -203,6 +209,8 @@ def resolve_audio_devices():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _main_loop
+    _main_loop = asyncio.get_running_loop() 
     port = get("server.port", 8000)
     print("\n" + "=" * 50)
     print("  Interview Copilot 已启动")
@@ -210,6 +218,38 @@ async def lifespan(app: FastAPI):
     print(f"  手机端: http://<电脑IP>:{port}/m/{_pin()}")
     print(f"  访问 PIN: {_pin()}")
     print("=" * 50 + "\n")
+
+    def on_desktop_screenshot():
+        print("\n[调试] 监听到双击左键！")
+        if _main_loop:
+            print(f"[调试] 主循环状态: is_running={_main_loop.is_running()}")
+            if _main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(_handle_desktop_screenshot(), _main_loop)
+                print("[调试] 任务已提交到 asyncio 主循环")
+        else:
+            print("[调试] ❌ 错误: _main_loop 为空")
+
+    def on_desktop_stage():
+        global staged_screenshots
+        b64 = capture_screen_base64()
+        if b64:
+            staged_screenshots.append(b64)
+            if len(staged_screenshots) > 5:
+                staged_screenshots.pop(0)
+            print(f"\n[截图] 📸 已暂存 {len(staged_screenshots)} 张")
+            # 可以广播给前端提示，这里简略
+            if _main_loop and _main_loop.is_running():
+                asyncio.run_coroutine_threadsafe(
+                    manager.send_to_desktop({"type": "my_speech", "text": f"[系统] 已暂存 {len(staged_screenshots)} 张截图"}), 
+                    _main_loop
+                )
+
+    listener = InputListener(
+        on_double_click=on_desktop_screenshot,
+        on_middle_double_click=on_desktop_stage
+    )
+    listener.start()
+    print("[监听] 双击左键发送截图，双击中键暂存截图")
 
     def _shutdown_handler(signum, frame):
         print("\n[退出] 收到中断信号，正在清理音频流...")
@@ -324,10 +364,39 @@ async def handle_interviewer_question(question: str, task_id: str):
     ))
 
     try:
-        kb_results = await asyncio.to_thread(kb.search, question, top_k=get("rag.top_k", 3))
-        strategy = decide_strategy(question, kb_results, detector)
+        # 1. 获取历史记录
+        all_history = await asyncio.to_thread(history.load_session, CURRENT_SESSION_ID)
+        interview_history = [m for m in all_history if m.get("scene") == "interview"]
+        recent_history = interview_history[-20:] if len(interview_history) > 0 else []
+        while recent_history and recent_history[0].get("role") != "interviewer":
+            recent_history.pop(0)
 
-        # 通知前端：新问题来了，请新建气泡
+        history_msgs = []
+        for m in recent_history:
+            role = "user" if m["role"] == "interviewer" else "assistant"
+            history_msgs.append({"role": role, "content": m["content"]})
+
+        # ★ 核心机制：检查内存中是否有正在生成的任务（面试官的补充说明）
+        live_context = ""
+        for tid, info in list(live_tasks_context.items()):
+            if tid != task_id and info["answer"]: # 如果别的任务正在生成，且有内容
+                live_context += f"【面试官刚问了】{info['question']}\n【你正在回答】{info['answer']}\n"
+        
+        final_question = question
+        if live_context:
+            print(f"[并发检测] 发现正在生成的任务，合并补充说明...")
+            final_question = (
+                f"（注意：面试官这是对你上一个回答的补充说明。\n"
+                f"上下文参考：\n{live_context}\n"
+                f"）\n请结合上面的背景，直接回答最新补充的问题：{question}"
+            )
+
+        # 记录当前任务的初始状态
+        live_tasks_context[task_id] = {"question": question, "answer": ""}
+
+        kb_results = await asyncio.to_thread(kb.search, final_question, top_k=get("rag.top_k", 3))
+        strategy = decide_strategy(final_question, kb_results, detector)
+
         await manager.broadcast({
             "type": "new_question", 
             "task_id": task_id,
@@ -336,11 +405,18 @@ async def handle_interviewer_question(question: str, task_id: str):
         })
 
         content_buffer = ""
-        async for event in generator.generate_stream(question, strategy=strategy, kb_results=kb_results):
+        async for event in generator.generate_stream(
+            final_question, # ★ 发送合并后的文本
+            strategy=strategy, 
+            kb_results=kb_results,
+            history_messages=history_msgs
+        ):
             if event["type"] == "thinking":
                 await manager.broadcast({"type": "thinking_chunk", "task_id": task_id, "text": event["text"]})
             elif event["type"] == "content":
                 content_buffer = event["text"]
+                # ★ 实时更新内存里的答案状态，让后续的并发任务能看见
+                live_tasks_context[task_id]["answer"] = content_buffer 
                 await manager.broadcast({"type": "answer_chunk", "task_id": task_id, "text": content_buffer})
                 
         await manager.broadcast({"type": "answer_done", "task_id": task_id})
@@ -351,6 +427,87 @@ async def handle_interviewer_question(question: str, task_id: str):
         
     except asyncio.CancelledError:
         raise
+    except Exception as e:
+        await manager.broadcast({"type": "answer_error", "task_id": task_id, "message": str(e)})
+    finally:
+        # 任务完成或报错，从内存中清理
+        if task_id in live_tasks_context:
+            del live_tasks_context[task_id]
+
+async def _handle_desktop_screenshot():
+    global staged_screenshots
+    print("\n[截图] 开始处理桌面截图...")
+    
+    try:
+        current_b64 = capture_screen_base64()
+        if current_b64:
+            print(f"[截图] 当前屏幕抓取成功，长度: {len(current_b64)} 字符")
+        else:
+            print("[截图] ❌ 当前屏幕抓取失败")
+
+        images_to_send = list(staged_screenshots)
+        if current_b64:
+            images_to_send.append(current_b64)
+        staged_screenshots.clear()
+
+        if not images_to_send:
+            print("[截图] ❌ 没有任何图片可发送")
+            return
+
+        print(f"[截图] 准备发送 {len(images_to_send)} 张图给 AI...")
+
+        import uuid  # 临时加在这里，防止没引入
+        task_id = str(uuid.uuid4())[:8]
+        
+        await manager.broadcast({
+            "type": "new_question", 
+            "task_id": task_id,
+            "text": f"[桌面截图题] 共 {len(images_to_send)} 张图", 
+            "strategy": "full"
+        })
+
+        history.save_message(CURRENT_SESSION_ID, "interviewer", "[桌面截图题]", scene="interview")
+
+        thinking_buf = ""
+        content_buf = ""
+        
+        print("[截图] 正在调用视觉 API...") # 👈 看看有没有走到这里
+        async for event in vision.ask_image_stream(
+            image_bytes=images_to_send,
+            question="请看截图中的代码题或题目，给出解答。",
+            thinking_mode="high"
+        ):
+            if event["type"] == "thinking":
+                thinking_buf = event["text"]
+                await manager.broadcast({"type": "thinking_chunk", "task_id": task_id, "text": thinking_buf})
+            elif event["type"] == "content":
+                content_buf = event["text"]
+                await manager.broadcast({"type": "answer_chunk", "task_id": task_id, "text": content_buf})
+        
+        await manager.broadcast({"type": "answer_done", "task_id": task_id})
+        history.save_message(CURRENT_SESSION_ID, "assistant", content_buf, scene="interview")
+        print("[截图] ✅ 发送完成")
+        
+    except Exception as e:
+        import traceback
+        print(f"\n[截图] ❌ 发生致命错误: {e}")
+        traceback.print_exc()  # 👈 打印完整报错栈
+    try:
+        # 强制使用 high 深度思考，并传入列表
+        async for event in vision.ask_image_stream(
+            image_bytes=images_to_send,  # 如果你之前的 vision_client 只接收单张，这里需要它支持列表
+            question="请看截图中的代码题或题目，给出解答。",
+            thinking_mode="high"
+        ):
+            if event["type"] == "thinking":
+                thinking_buf = event["text"]
+                await manager.broadcast({"type": "thinking_chunk", "task_id": task_id, "text": thinking_buf})
+            elif event["type"] == "content":
+                content_buf = event["text"]
+                await manager.broadcast({"type": "answer_chunk", "task_id": task_id, "text": content_buf})
+        
+        await manager.broadcast({"type": "answer_done", "task_id": task_id})
+        history.save_message(CURRENT_SESSION_ID, "assistant", content_buf, scene="interview")
     except Exception as e:
         await manager.broadcast({"type": "answer_error", "task_id": task_id, "message": str(e)})
 
@@ -639,6 +796,49 @@ async def api_delete_source(name: str):
     except Exception as e:
         return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
     
+@app.post("/api/kb/backup")
+async def api_kb_backup():
+    """备份当前知识库"""
+    from config import CHROMA_DIR
+    backup_dir = CHROMA_DIR.parent / "chroma_db_backup"
+    try:
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+        shutil.copytree(CHROMA_DIR, backup_dir)
+        return {"status": "ok", "message": "知识库备份成功"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
+@app.post("/api/kb/restore")
+async def api_kb_restore():
+    """从备份恢复知识库（热重载）"""
+    global kb
+    from config import CHROMA_DIR
+    backup_dir = CHROMA_DIR.parent / "chroma_db_backup"
+    
+    if not backup_dir.exists():
+        return JSONResponse({"status": "error", "message": "未找到备份文件！"}, status_code=404)
+        
+    try:
+        # 1. 释放旧的数据库连接（极其重要，否则 Windows 下无法删除文件）
+        del kb
+        gc.collect()
+        
+        # 2. 删掉损坏的库
+        if CHROMA_DIR.exists():
+            shutil.rmtree(CHROMA_DIR)
+            
+        # 3. 把备份拷过来
+        shutil.copytree(backup_dir, CHROMA_DIR)
+        
+        # 4. 重新初始化全局实例
+        kb = KnowledgeBase()
+        
+        await manager.send_to_desktop({"type": "kb_updated"})
+        return {"status": "ok", "message": "知识库已从备份恢复"}
+    except Exception as e:
+        return JSONResponse({"status": "error", "message": str(e)}, status_code=500)
+
 #声纹测试接口    
 @app.get("/api/pin")
 async def api_pin():

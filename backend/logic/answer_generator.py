@@ -75,10 +75,11 @@ class AnswerGenerator:
         question: str,
         system_override: str = None,
         strategy: Strategy = Strategy.FULL,
-        max_tokens: int = 300,
+        max_tokens: int = 2000,
         thinking_mode: str = None,
         mode: str = "interview",
-        kb_results: List[str] = None
+        kb_results: List[str] = None,
+        history_messages: List[dict] = None
     ) -> AsyncGenerator[dict, None]:
         if thinking_mode is None:
             thinking_mode = get(f"thinking.{mode}_default", "off")
@@ -92,6 +93,7 @@ class AnswerGenerator:
                     self.kb.search, question, top_k=get("rag.top_k", 3)
                 ) if self.kb else []
             context = "\n---\n".join(kb_results) if kb_results else "无相关素材"
+            print(f"\n[RAG 检索结果]\n{context}\n")
             base_prompt = self.build_system_prompt(context, mode=mode)
             
             # ★ 注入策略卡
@@ -105,10 +107,10 @@ class AnswerGenerator:
                 "不要编造具体经历或数据。"
             )
 
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": question}
-        ]
+        messages = [{"role": "system", "content": system_prompt}]
+        if history_messages:
+            messages.extend(history_messages)
+        messages.append({"role": "user", "content": question})
 
         async for event in self._stream_once(
             messages,
@@ -168,14 +170,14 @@ class AnswerGenerator:
             model=get("deepseek.prepare_model"),
             thinking_mode=thinking_mode,
             temperature=0.8,
-            max_tokens=1500
+            max_tokens=16000
         ):
             yield event
 
     async def generate_code_stream(
         self,
         question: str,
-        image_bytes: bytes = None,
+        image_bytes_list: list = None,  # ★ 改为接收列表
         thinking_mode: str = None
     ) -> AsyncGenerator[dict, None]:
         if thinking_mode is None:
@@ -183,13 +185,24 @@ class AnswerGenerator:
 
         system_prompt = self.build_system_prompt("", mode="code")
 
-        if image_bytes:
+        if image_bytes_list and len(image_bytes_list) > 0:
             import base64
-            b64 = base64.b64encode(image_bytes).decode()
+            # 构造文本部分
             user_content = [
-                {"type": "text", "text": question or "请解读图片中的题目并给出代码解答"},
-                {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}}
+                {"type": "text", "text": question or "请综合解读这几张图片中的题目，给出代码解答"}
             ]
+            # ★ 循环追加所有的图片
+            for img_data in image_bytes_list:
+                # 电脑端截图传过来的是 str，手机端拍照传过来的是 bytes
+                if isinstance(img_data, bytes):
+                    b64 = base64.b64encode(img_data).decode()
+                else:
+                    b64 = img_data  # 已经是 base64 字符串了，直接用
+                    
+                user_content.append({
+                    "type": "image_url", 
+                    "image_url": {"url": f"data:image/jpeg;base64,{b64}"}
+                })
         else:
             user_content = question
 
@@ -203,6 +216,6 @@ class AnswerGenerator:
             model=get("deepseek.interview_model"),
             thinking_mode=thinking_mode,
             temperature=0.3,
-            max_tokens=2000
+            max_tokens=4000
         ):
             yield event

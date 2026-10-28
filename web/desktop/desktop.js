@@ -394,6 +394,37 @@ function uploadFile() {
   input.click();
 }
 
+async function backupKB() {
+  if (!confirm('确定要备份当前知识库吗？如果后续发生崩溃，可以用它一键恢复。')) return;
+  try {
+    const res = await fetch('/api/kb/backup', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      alert('✅ 备份成功！');
+    } else {
+      alert('❌ 备份失败: ' + data.message);
+    }
+  } catch (e) {
+    alert('❌ 请求失败: ' + e.message);
+  }
+}
+
+async function restoreKB() {
+  if (!confirm('⚠️ 确定要从备份恢复吗？\n当前已上传的资料将被备份文件覆盖！')) return;
+  try {
+    const res = await fetch('/api/kb/restore', { method: 'POST' });
+    const data = await res.json();
+    if (data.status === 'ok') {
+      alert('✅ 恢复成功！请刷新页面查看。');
+      loadSources();
+    } else {
+      alert('❌ 恢复失败: ' + data.message);
+    }
+  } catch (e) {
+    alert('❌ 请求失败: ' + e.message);
+  }
+}
+
 function newSession() { if (ws?.readyState === 1) ws.send(JSON.stringify({ type: 'new_session' })); }
 function loadHistory(sessionId) {
   currentSessionId = sessionId;

@@ -95,6 +95,10 @@ class StrategyManager:
         parent_style = self.load_parent_and_style()
         dynamic = self.get_dynamic_cards(question)
 
+        # ★ 打印调试信息，看看命中了什么卡
+        print(f"\n[策略卡] 当前问题: {question}")
+        print(f"[策略卡] 命中子卡长度: {len(dynamic)} 字符")
+
         prompt = f"{parent_style}\n\n"
         if dynamic:
             prompt += f"{dynamic}\n\n"

@@ -24,7 +24,11 @@
     <div class="section">
       <div class="section-title">
         <span>知识库</span>
-        <button onclick="uploadFile()">+</button>
+        <div style="display:flex; gap:4px;">
+          <button onclick="backupKB()" title="备份当前知识库" style="font-size:12px; padding:0;">💾</button>
+          <button onclick="restoreKB()" title="从备份恢复" style="font-size:12px; padding:0; color:#d97706;">⏪</button>
+          <button onclick="uploadFile()" title="上传文件">+</button>
+        </div>
       </div>
       <div id="fileList"></div>
     </div>

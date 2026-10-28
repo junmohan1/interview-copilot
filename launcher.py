@@ -122,8 +122,20 @@ class Launcher:
 
         self._start_boss_key()
 
+        def on_closed():
+            print("\n[退出] 窗口已关闭，正在清理后台资源...")
+            # 强制触发一次垃圾回收，释放可能被锁定的数据库文件句柄
+            import gc
+            gc.collect()
+            # 这里可以给 ChromaDB 留出 1 秒的落盘时间
+            import time
+            time.sleep(1)
+            import os
+            os._exit(0)
+
         try:
-            webview.start()
+            # 传入 on_closed 回调
+            webview.start(func=None, on_closed=on_closed)
         except Exception as e:
             print(f"[窗口] pywebview 启动失败: {e}")
             import webbrowser
